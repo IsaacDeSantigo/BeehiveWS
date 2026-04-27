@@ -13,7 +13,6 @@
   * in the root directory of this software component.
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
-  * Hola Como estas Jeje
   *
   ******************************************************************************
   */
@@ -34,6 +33,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define YES 1
+#define NO 0
 
 /* USER CODE END PD */
 
@@ -51,36 +52,28 @@ SD_HandleTypeDef hsd1;
 
 /* USER CODE BEGIN PV */
 #define BUFFER_SIZE 4096	//Tamaño total del arreglo
-#define BUFFER_MIC 16384
 
-__attribute__((section(".ram_cd"))) uint32_t audio_buffer[BUFFER_SIZE];
+//__attribute__((section(".ram_cd"))) uint32_t audio_buffer[BUFFER_SIZE];
+uint32_t audio_buffer[BUFFER_SIZE];
+
 
 HAL_SD_CardInfoTypeDef mi_tarjeta_sd;
 uint8_t sd_estado = 0; // 1 = Éxito, 0 = Error
 
-
-//volatile uint16_t audio_buffer[BUFFER_SIZE*2];
-
-volatile uint32_t mic_left[BUFFER_MIC];
-volatile uint32_t mic_right[BUFFER_MIC];
-
-int indexLeft = 0;
-int indexRight = 0;
 uint32_t i = 0;
-volatile uint8_t go = 0;
 
 uint32_t ndtr = 0;
 uint32_t datos_nuevos_pre = 0;
 uint32_t datos_nuevos_post = 0;
 
+volatile uint8_t IS_BUFFER_HALF_FULL = NO;
+volatile uint8_t IS_BUFFER_FULL = NO;
 
-volatile uint8_t half_flag = 0;
-volatile uint8_t full_flag = 0;
+volatile uint8_t boton_parar_presionado = 0;
 
 FATFS fs;         // Objeto del sistema de archivos
 FIL fil;          // Objeto del archivo
 FRESULT res;      // Variable para guardar el resultado de las operaciones
-char msg[] = "Hola Mundo desde STM32 con FatFs!\n";
 UINT bytesWritten; // Para saber cuántos bytes se escribieron realmente
 
 /* USER CODE END PV */
@@ -138,41 +131,24 @@ int main(void)
   MX_I2S1_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
- // HAL_I2S_Receive_DMA(&hi2s1,(uint16_t *)audio_buffer, BUFFER_SIZE);
 
   // 1. Montar la tarjeta SD
-  // El "1" significa que intentará montar la tarjeta de inmediato
-  res = f_mount(&fs, "0:", 1);
 
-  if (res == FR_OK) {
-      // 2. Crear/Abrir un archivo para escribir (FA_CREATE_ALWAYS pisa el anterior si existe)
-      res = f_open(&fil, "audio.raw", FA_CREATE_ALWAYS | FA_WRITE);
+  res = f_mount(&fs, "", 1);
+	if (res == FR_OK) {
+		// 2. Crear/Abrir un archivo para escribir (FA_CREATE_ALWAYS pisa el anterior si existe)
+		res = f_open(&fil, "audio.raw", FA_CREATE_ALWAYS | FA_WRITE);
+	} else {
+		// Si res no es FR_OK, algo falló en el montaje
+		Error_Handler();
+	}
 
-      if (res == FR_OK) {
-          // 3. Escribir el mensaje
-          res = f_write(&fil, msg, strlen(msg), &bytesWritten);
+  HAL_I2S_Receive_DMA(&hi2s1,(uint16_t *)audio_buffer, BUFFER_SIZE);
 
-          // 4. CERRAR EL ARCHIVO (Paso más importante para guardar datos)
-          f_close(&fil);
-
-          if (res == FR_OK && bytesWritten > 0) {
-              // ¡ÉXITO! Puedes encender un LED aquí
-          }
-      }
-
-      // 5. Desmontar (opcional si vas a seguir usándola)
-      f_mount(NULL, "", 0);
-  } else {
-      // Si res no es FR_OK, algo falló en el montaje
-      Error_Handler();
-  }
-
-
-
-  while(!full_flag);
-  full_flag = 0;
-  half_flag = 0;
-  go = 1;
+  // Se pretende realizar una primera adquisición y desechar
+  while(IS_BUFFER_FULL == NO);
+  IS_BUFFER_FULL = NO;
+  IS_BUFFER_HALF_FULL = NO;
 
   /* USER CODE END 2 */
 
@@ -186,40 +162,44 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  if(half_flag & go) {
+		if(IS_BUFFER_HALF_FULL == YES) {
 
-		  	  // 1. Leemos el contador inmediatamente al entrar
-		      ndtr = __HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
-		      datos_nuevos_pre = (BUFFER_SIZE / 2) - ndtr;
 
-	  			for(i = 0; i < BUFFER_SIZE / 2; i += 2) {
+			ndtr = __HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
+			datos_nuevos_pre = (BUFFER_SIZE / 2) - ndtr;	//Determina cantidad de muestras procesadas por el DMA despues de que se genera la interrupcion
 
-	  				mic_left[indexLeft++]    = audio_buffer[i];       // Índice Par (Izquierdo)
-	  				mic_right[indexRight++]  = audio_buffer[i+1];   // Índice Impar (Derecho)
 
-	  			}
-	  			half_flag = 0;
-			    ndtr = __HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
-			    datos_nuevos_post = (BUFFER_SIZE / 2) - ndtr;
-			    __NOP();
+		    res = f_write(&fil, &audio_buffer[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWritten);
 
-	  			}
+			if ((bytesWritten == 0 ) || res != FR_OK) {
+				Error_Handler();
+			}
 
-	  		if(full_flag & go) {
+			ndtr = __HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
+			datos_nuevos_post = (BUFFER_SIZE / 2) - ndtr; //Determina la cantidad de muestras procesadas por el DMA despues de enviar a SD
 
-	  			for(i = BUFFER_SIZE / 2; i < BUFFER_SIZE; i += 2) {
-	  				mic_left[indexLeft++]    = audio_buffer[i];       	// Índice Par (Izquierdo)
-	  				mic_right[indexRight++]    = audio_buffer[i+1];       // Índice Par (Izquierdo)
+			IS_BUFFER_HALF_FULL = NO;
 
-	  				if(indexLeft  >= BUFFER_MIC - 1) indexLeft = 0;
 
-	  				if(indexRight >= BUFFER_MIC - 1) {
-	  					indexRight = 0;
-	  					__NOP();
-	  				}
-	  			}
-	  			full_flag = 0;
-	  		}
+		}
+
+		if(IS_BUFFER_FULL == YES ) {
+
+			res = f_write(&fil, &audio_buffer[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWritten);
+
+			if ((bytesWritten == 0 ) || res != FR_OK) {
+				// Manejar error
+			}
+
+			IS_BUFFER_FULL = NO;
+		}
+
+		if (boton_parar_presionado) {
+		        f_close(&fil);
+		        f_mount(NULL, "", 0);
+		        HAL_I2S_DMAStop(&hi2s1);
+		        break; // Salir del bucle
+		    }
   }
 
   /* USER CODE END 3 */
@@ -385,14 +365,17 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
-  /*Configure GPIO pin : SD_DETECT_Pin */
-  GPIO_InitStruct.Pin = SD_DETECT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(SD_DETECT_GPIO_Port, &GPIO_InitStruct);
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(B1_EXTI_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(B1_EXTI_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -402,17 +385,27 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_I2S_RxHalfCpltCallback(I2S_HandleTypeDef *hi2s1) {
     if (hi2s1->Instance == SPI1) {
-        half_flag = 1;
+    	IS_BUFFER_HALF_FULL = YES;
     }
 }
 
 // El DMA llenó la segunda mitad del arreglo (índices 2048 a 4095)
 void HAL_I2S_RxCpltCallback(I2S_HandleTypeDef *hi2s1) {
     if (hi2s1->Instance == SPI1) {
-        full_flag = 1;
+    	IS_BUFFER_FULL = YES;
     }
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    // 1. Verificamos cuál pin generó la interrupción
+    if (GPIO_Pin == B1_Pin) // 'B1_Pin' es el nombre que le diste en CubeMX
+    {
+        // 2. Aquí pones tu lógica
+        // Por ejemplo: cambiar una bandera para detener la grabación
+        boton_parar_presionado = 1;
+    }
+}
 /* USER CODE END 4 */
 
  /* MPU Configuration */
