@@ -45,8 +45,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 
-I2S_HandleTypeDef hi2s1;
-DMA_HandleTypeDef hdma_spi1_rx;
+SAI_HandleTypeDef hsai_BlockA1;
+DMA_HandleTypeDef hdma_sai1_a;
 
 SD_HandleTypeDef hsd1;
 
@@ -84,7 +84,7 @@ static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SDMMC1_SD_Init(void);
-static void MX_I2S1_Init(void);
+static void MX_SAI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -128,8 +128,8 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_SDMMC1_SD_Init();
-  MX_I2S1_Init();
   MX_FATFS_Init();
+  MX_SAI1_Init();
   /* USER CODE BEGIN 2 */
 
   // 1. Montar la tarjeta SD
@@ -143,7 +143,7 @@ int main(void)
 		Error_Handler();
 	}
 
-  HAL_I2S_Receive_DMA(&hi2s1,(uint16_t *)audio_buffer, BUFFER_SIZE);
+	HAL_SAI_Receive_DMA(&hsai_BlockA1,(uint8_t *)audio_buffer, BUFFER_SIZE);
 
   // Se pretende realizar una primera adquisición y desechar
   while(IS_BUFFER_FULL == NO);
@@ -165,8 +165,12 @@ int main(void)
 		if(IS_BUFFER_HALF_FULL == YES) {
 
 
-			ndtr = __HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
+			ndtr = __HAL_DMA_GET_COUNTER(&hdma_sai1_a);
 			datos_nuevos_pre = (BUFFER_SIZE / 2) - ndtr;	//Determina cantidad de muestras procesadas por el DMA despues de que se genera la interrupcion
+
+			for (uint32_t i = 0; i < (BUFFER_SIZE / 2); i++) {
+			    audio_buffer[i] &= 0xFFFFFF00;
+			}
 
 
 		    res = f_write(&fil, &audio_buffer[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWritten);
@@ -175,7 +179,7 @@ int main(void)
 				Error_Handler();
 			}
 
-			ndtr = __HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
+			ndtr = __HAL_DMA_GET_COUNTER(&hdma_sai1_a);
 			datos_nuevos_post = (BUFFER_SIZE / 2) - ndtr; //Determina la cantidad de muestras procesadas por el DMA despues de enviar a SD
 
 			IS_BUFFER_HALF_FULL = NO;
@@ -184,6 +188,10 @@ int main(void)
 		}
 
 		if(IS_BUFFER_FULL == YES ) {
+
+			for (uint32_t i = BUFFER_SIZE / 2; i < (BUFFER_SIZE); i++) {
+						    audio_buffer[i] &= 0xFFFFFF00;
+						}
 
 			res = f_write(&fil, &audio_buffer[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWritten);
 
@@ -197,7 +205,7 @@ int main(void)
 		if (boton_parar_presionado) {
 		        f_close(&fil);
 		        f_mount(NULL, "", 0);
-		        HAL_I2S_DMAStop(&hi2s1);
+		        HAL_SAI_DMAStop(&hsai_BlockA1);
 		        break; // Salir del bucle
 		    }
   }
@@ -268,38 +276,53 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief I2S1 Initialization Function
+  * @brief SAI1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_I2S1_Init(void)
+static void MX_SAI1_Init(void)
 {
 
-  /* USER CODE BEGIN I2S1_Init 0 */
+  /* USER CODE BEGIN SAI1_Init 0 */
 
-  /* USER CODE END I2S1_Init 0 */
+  /* USER CODE END SAI1_Init 0 */
 
-  /* USER CODE BEGIN I2S1_Init 1 */
+  /* USER CODE BEGIN SAI1_Init 1 */
 
-  /* USER CODE END I2S1_Init 1 */
-  hi2s1.Instance = SPI1;
-  hi2s1.Init.Mode = I2S_MODE_MASTER_RX;
-  hi2s1.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s1.Init.DataFormat = I2S_DATAFORMAT_24B;
-  hi2s1.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
-  hi2s1.Init.AudioFreq = I2S_AUDIOFREQ_8K;
-  hi2s1.Init.CPOL = I2S_CPOL_LOW;
-  hi2s1.Init.FirstBit = I2S_FIRSTBIT_MSB;
-  hi2s1.Init.WSInversion = I2S_WS_INVERSION_DISABLE;
-  hi2s1.Init.Data24BitAlignment = I2S_DATA_24BIT_ALIGNMENT_LEFT;
-  hi2s1.Init.MasterKeepIOState = I2S_MASTER_KEEP_IO_STATE_DISABLE;
-  if (HAL_I2S_Init(&hi2s1) != HAL_OK)
+  /* USER CODE END SAI1_Init 1 */
+  hsai_BlockA1.Instance = SAI1_Block_A;
+  hsai_BlockA1.Init.Protocol = SAI_FREE_PROTOCOL;
+  hsai_BlockA1.Init.AudioMode = SAI_MODEMASTER_RX;
+  hsai_BlockA1.Init.DataSize = SAI_DATASIZE_32;
+  hsai_BlockA1.Init.FirstBit = SAI_FIRSTBIT_MSB;
+  hsai_BlockA1.Init.ClockStrobing = SAI_CLOCKSTROBING_RISINGEDGE;
+  hsai_BlockA1.Init.Synchro = SAI_ASYNCHRONOUS;
+  hsai_BlockA1.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
+  hsai_BlockA1.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
+  hsai_BlockA1.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
+  hsai_BlockA1.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_8K;
+  hsai_BlockA1.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
+  hsai_BlockA1.Init.MonoStereoMode = SAI_STEREOMODE;
+  hsai_BlockA1.Init.CompandingMode = SAI_NOCOMPANDING;
+  hsai_BlockA1.Init.PdmInit.Activation = DISABLE;
+  hsai_BlockA1.Init.PdmInit.MicPairsNbr = 0;
+  hsai_BlockA1.Init.PdmInit.ClockEnable = SAI_PDM_CLOCK1_ENABLE;
+  hsai_BlockA1.FrameInit.FrameLength = 64;
+  hsai_BlockA1.FrameInit.ActiveFrameLength = 32;
+  hsai_BlockA1.FrameInit.FSDefinition = SAI_FS_CHANNEL_IDENTIFICATION;
+  hsai_BlockA1.FrameInit.FSPolarity = SAI_FS_ACTIVE_LOW;
+  hsai_BlockA1.FrameInit.FSOffset = SAI_FS_BEFOREFIRSTBIT;
+  hsai_BlockA1.SlotInit.FirstBitOffset = 0;
+  hsai_BlockA1.SlotInit.SlotSize = SAI_SLOTSIZE_DATASIZE;
+  hsai_BlockA1.SlotInit.SlotNumber = 2;
+  hsai_BlockA1.SlotInit.SlotActive = 0x00000003;
+  if (HAL_SAI_Init(&hsai_BlockA1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2S1_Init 2 */
+  /* USER CODE BEGIN SAI1_Init 2 */
 
-  /* USER CODE END I2S1_Init 2 */
+  /* USER CODE END SAI1_Init 2 */
 
 }
 
@@ -323,7 +346,7 @@ static void MX_SDMMC1_SD_Init(void)
   hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd1.Init.BusWide = SDMMC_BUS_WIDE_1B;
   hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_ENABLE;
-  hsd1.Init.ClockDiv = 2;
+  hsd1.Init.ClockDiv = 0;
   /* USER CODE BEGIN SDMMC1_Init 2 */
   //if (HAL_SD_ConfigWideBusOperation(&hsd1, SDMMC_BUS_WIDE_4B) != HAL_OK) {
   //      Error_Handler(); // Si los cables D1, D2 o D3 están mal, caerá aquí.
@@ -343,9 +366,9 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
 
 }
 
@@ -362,9 +385,9 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin : B1_Pin */
@@ -373,8 +396,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : SD_DETECT_Pin */
+  GPIO_InitStruct.Pin = SD_DETECT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(SD_DETECT_GPIO_Port, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(B1_EXTI_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(B1_EXTI_IRQn, 7, 0);
   HAL_NVIC_EnableIRQ(B1_EXTI_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -383,15 +412,15 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_I2S_RxHalfCpltCallback(I2S_HandleTypeDef *hi2s1) {
-    if (hi2s1->Instance == SPI1) {
+void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai_BlockA1) {
+    if (hsai_BlockA1->Instance == SAI1_Block_A) {
     	IS_BUFFER_HALF_FULL = YES;
     }
 }
 
 // El DMA llenó la segunda mitad del arreglo (índices 2048 a 4095)
-void HAL_I2S_RxCpltCallback(I2S_HandleTypeDef *hi2s1) {
-    if (hi2s1->Instance == SPI1) {
+void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai_BlockA1) {
+    if (hsai_BlockA1->Instance == SAI1_Block_A) {
     	IS_BUFFER_FULL = YES;
     }
 }

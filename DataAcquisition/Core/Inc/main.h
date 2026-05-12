@@ -68,6 +68,8 @@ void Error_Handler(void);
 #define PH0_MCU_GPIO_Port GPIOH
 #define PH1_MCU_Pin GPIO_PIN_1
 #define PH1_MCU_GPIO_Port GPIOH
+#define SD_DETECT_Pin GPIO_PIN_0
+#define SD_DETECT_GPIO_Port GPIOC
 
 /* USER CODE BEGIN Private defines */
 
