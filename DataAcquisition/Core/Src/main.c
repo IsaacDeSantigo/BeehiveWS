@@ -352,23 +352,24 @@ static void MX_SDMMC1_SD_Init(void)
   hsd1.Instance = SDMMC1;
   hsd1.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
   hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
-  hsd1.Init.BusWide = SDMMC_BUS_WIDE_1B;
+  hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_ENABLE;
-  hsd1.Init.ClockDiv = 2;
+  hsd1.Init.ClockDiv = 0;
   /* USER CODE BEGIN SDMMC1_Init 2 */
-//  // 2. Inicializamos la tarjeta de forma segura en 1-Bit
-//    if (HAL_SD_Init(&hsd1) != HAL_OK)
-//    {
-//        Error_Handler();
-//    }
-//
-//    /* USER CODE BEGIN SDMMC1_Init 2 */
-//    // 3. Una vez inicializada con éxito, AHORA SÍ le decimos a la tarjeta
-//    // y al STM32 que se muevan juntos a 4-Bits mediante la función nativa:
-//    if (HAL_SD_ConfigWideBusOperation(&hsd1, SDMMC_BUS_WIDE_4B) != HAL_OK)
-//    {
-//        Error_Handler();
-//    }
+    hsd1.Init.BusWide = SDMMC_BUS_WIDE_1B;
+    // 2. Inicializamos la tarjeta de forma segura en 1-Bit
+        if (HAL_SD_Init(&hsd1) != HAL_OK)
+        {
+            Error_Handler();
+        }
+        //HAL_Delay(10);
+        // 3. Una vez inicializada con éxito, AHORA SÍ le decimos a la tarjeta
+        // y al STM32 que se muevan juntos a 4-Bits mediante la función nativa:
+        if (HAL_SD_ConfigWideBusOperation(&hsd1, SDMMC_BUS_WIDE_4B) != HAL_OK)
+        {
+            Error_Handler();
+        }
+        hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   /* USER CODE END SDMMC1_Init 2 */
 
 }
@@ -420,7 +421,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(SD_DETECT_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(B1_EXTI_IRQn, 7, 0);
+  HAL_NVIC_SetPriority(B1_EXTI_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(B1_EXTI_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
