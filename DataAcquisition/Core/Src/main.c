@@ -47,19 +47,40 @@
 
 SAI_HandleTypeDef hsai_BlockA1;
 SAI_HandleTypeDef hsai_BlockB1;
+SAI_HandleTypeDef hsai_BlockA2;
+SAI_HandleTypeDef hsai_BlockB2;
 DMA_HandleTypeDef hdma_sai1_a;
 DMA_HandleTypeDef hdma_sai1_b;
+DMA_HandleTypeDef hdma_sai2_a;
+DMA_HandleTypeDef hdma_sai2_b;
 
 SD_HandleTypeDef hsd1;
 
 /* USER CODE BEGIN PV */
-#define BUFFER_SIZE 4096	//Tamaño total del arreglo
 
-//__attribute__((section(".ram_cd"))) uint32_t audio_buffer[BUFFER_SIZE];
-//SAI 1 - BUFFERS PARA SAI A y B
-uint32_t audio_buffer_A[BUFFER_SIZE];
-uint32_t audio_buffer_B[BUFFER_SIZE];
+/* ----- BUFFER SECTION  ----- */
+#define BUFFER_SIZE 4096*4	//Circular Buffer Array Size
 
+volatile uint8_t IS_BUFFER_HALF_FULL_SAI1 = NO;
+volatile uint8_t IS_BUFFER_FULL_SAI1      = NO;
+
+volatile uint8_t IS_BUFFER_HALF_FULL_SAI2 = NO;
+volatile uint8_t IS_BUFFER_FULL_SAI2      = NO;
+
+/* ----- SAI 2 - BUFFERS PARA SAI C y D ----- */
+
+uint32_t audio_buffer_SAI2A[BUFFER_SIZE];
+uint32_t audio_buffer_SAI2B[BUFFER_SIZE];
+
+/* ----- SAI 1 - BUFFERS PARA SAI A y B ----- */
+
+uint32_t audio_buffer_SAI1A[BUFFER_SIZE];
+uint32_t audio_buffer_SAI1B[BUFFER_SIZE];
+
+/* ----- Debug Variables ----- */
+HAL_StatusTypeDef err_A2 = HAL_ERROR, err_B2 = HAL_ERROR;
+
+/* ----- SD Card Section ----- */
 
 HAL_SD_CardInfoTypeDef mi_tarjeta_sd;
 uint8_t sd_estado = 0; // 1 = Éxito, 0 = Error
@@ -70,16 +91,18 @@ uint32_t ndtr = 0;
 uint32_t datos_nuevos_pre = 0;
 uint32_t datos_nuevos_post = 0;
 
-volatile uint8_t IS_BUFFER_HALF_FULL = NO;
-volatile uint8_t IS_BUFFER_FULL = NO;
+volatile uint8_t button_pressed = 0;
 
-volatile uint8_t boton_parar_presionado = 0;
+/* 1. Declaras la variable del tipo de dato correcto */
+HAL_StatusTypeDef estado_inicializacion;
 
 FATFS fs;         // Objeto del sistema de archivos
 FIL fil_A;          // Objeto del archivo
 FIL fil_B;          // Objeto del archivo
-FRESULT res_A, res_B;      // Variable para guardar el resultado de las operaciones
-UINT bytesWrittenA, bytesWrittenB; // Para saber cuántos bytes se escribieron realmente
+FIL fil_C;          // Objeto del archivo
+FIL fil_D;          // Objeto del archivo
+FRESULT res_A, res_B,res_C, res_D;      // Variable para guardar el resultado de las operaciones
+UINT bytesWrittenA, bytesWrittenB,bytesWrittenC,bytesWrittenD; // Para saber cuántos bytes se escribieron realmente
 
 /* USER CODE END PV */
 
@@ -91,6 +114,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SDMMC1_SD_Init(void);
 static void MX_SAI1_Init(void);
+static void MX_SAI2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -139,6 +163,7 @@ int main(void)
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   MX_SAI1_Init();
+  MX_SAI2_Init();
   /* USER CODE BEGIN 2 */
 
   // 1. Montar la tarjeta SD
@@ -150,7 +175,12 @@ int main(void)
 		    // 3. Segundo par de micrófonos
 		    res_B = f_open(&fil_B, "mics_3_4.raw", FA_CREATE_ALWAYS | FA_WRITE);
 
-		    if (res_A != FR_OK || res_B != FR_OK) {
+		    res_C = f_open(&fil_C, "mics_5_6.raw", FA_CREATE_ALWAYS | FA_WRITE);
+
+		    res_D = f_open(&fil_D, "mics_7_8.raw", FA_CREATE_ALWAYS | FA_WRITE);
+
+
+		    if (res_A != FR_OK || res_B != FR_OK || res_C != FR_OK || res_D != FR_OK) {
 		            Error_Handler();
 		        }
 
@@ -164,90 +194,103 @@ int main(void)
 		Error_Handler();
 	}
 
-
-
 	// Inicializar el esclavo interno, luego el maestro
-	HAL_SAI_Receive_DMA(&hsai_BlockB1, (uint8_t *)audio_buffer_B, BUFFER_SIZE);
-	HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t *)audio_buffer_A, BUFFER_SIZE);
+
+	HAL_SAI_Receive_DMA(&hsai_BlockA2, (uint8_t *)audio_buffer_SAI2A, BUFFER_SIZE);
+	HAL_SAI_Receive_DMA(&hsai_BlockB2, (uint8_t *)audio_buffer_SAI2B, BUFFER_SIZE);
+
+	HAL_SAI_Receive_DMA(&hsai_BlockA1, (uint8_t *)audio_buffer_SAI1A, BUFFER_SIZE);
+	HAL_SAI_Receive_DMA(&hsai_BlockB1, (uint8_t *)audio_buffer_SAI1B, BUFFER_SIZE);
 
   // Se pretende realizar una primera adquisición y desechar
-  while(IS_BUFFER_FULL == NO);
-  IS_BUFFER_FULL = NO;
-  IS_BUFFER_HALF_FULL = NO;
+  while(IS_BUFFER_HALF_FULL_SAI1 == NO);
+
+  IS_BUFFER_HALF_FULL_SAI1 = NO;
+  IS_BUFFER_HALF_FULL_SAI2 = NO;
+  IS_BUFFER_FULL_SAI1 = NO;
+  IS_BUFFER_FULL_SAI2 = NO;
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-
-
+    while (1)
+    {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
-		if(IS_BUFFER_HALF_FULL == YES) {
+  		// --- EVENTO 1: MITAD DE BUFFER ---
+  		// Usamos SAI1 como el reloj maestro del evento; si él está a la mitad, SAI2 también lo está.
+  		if(IS_BUFFER_HALF_FULL_SAI1 == YES || IS_BUFFER_HALF_FULL_SAI2 == YES) {
 
+  			// 1. Procesamiento y enmascaramiento de los 4 buffers en una sola pasada de CPU
+  			for (uint32_t i = 0; i < (BUFFER_SIZE / 2); i++) {
+  				audio_buffer_SAI1A[i] &= 0xFFFFFF00;
+  				audio_buffer_SAI1B[i] &= 0xFFFFFF00;
+  				audio_buffer_SAI2A[i] &= 0xFFFFFF00;
+  				audio_buffer_SAI2B[i] &= 0xFFFFFF00;
+  			}
 
-			ndtr = __HAL_DMA_GET_COUNTER(&hdma_sai1_a);
-			datos_nuevos_pre = (BUFFER_SIZE / 2) - ndtr;	//Determina cantidad de muestras procesadas por el DMA despues de que se genera la interrupcion
+  			// 2. Escritura consecutiva en ráfaga a la SD de los 4 archivos
+  			res_A = f_write(&fil_A, &audio_buffer_SAI1A[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenA);
+  			res_B = f_write(&fil_B, &audio_buffer_SAI1B[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenB);
+  			res_C = f_write(&fil_C, &audio_buffer_SAI2A[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenC);
+  			res_D = f_write(&fil_D, &audio_buffer_SAI2B[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenD);
 
-			for (uint32_t i = 0; i < (BUFFER_SIZE / 2); i++) {
-			    audio_buffer_A[i] &= 0xFFFFFF00;
-			    audio_buffer_B[i] &= 0xFFFFFF00;
-			}
+  			// 3. Verificación conjunta de errores
+  			if (res_A != FR_OK || res_B != FR_OK || res_C != FR_OK || res_D != FR_OK ||
+  				bytesWrittenA == 0 || bytesWrittenB == 0 || bytesWrittenC == 0 || bytesWrittenD == 0) {
+  				Error_Handler(); // Si el archivo 5, 6, 7 u 8 falla, aquí se detendrá el código en modo Debug
+  			}
 
-			        res_A = f_write(&fil_A, &audio_buffer_A[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenA);
+  			// 4. Bajamos ambas banderas simultáneamente
+  			IS_BUFFER_HALF_FULL_SAI1 = NO;
+  			IS_BUFFER_HALF_FULL_SAI2 = NO;
+  		}
 
+  		// --- EVENTO 2: BUFFER COMPLETO ---
+  		if(IS_BUFFER_FULL_SAI1 == YES || IS_BUFFER_FULL_SAI2 == YES) {
 
-			        res_B = f_write(&fil_B, &audio_buffer_B[0], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenB);
+  			// 1. Procesamiento de la segunda mitad de los 4 buffers
+  			for (uint32_t i = BUFFER_SIZE / 2; i < BUFFER_SIZE; i++) {
+  				audio_buffer_SAI1A[i] &= 0xFFFFFF00;
+  				audio_buffer_SAI1B[i] &= 0xFFFFFF00;
+  				audio_buffer_SAI2A[i] &= 0xFFFFFF00;
+  				audio_buffer_SAI2B[i] &= 0xFFFFFF00;
+  			}
 
-			if (res_A != FR_OK || res_B != FR_OK || bytesWrittenA == 0 || bytesWrittenB == 0) {
-				Error_Handler();
-			}
+  			// 2. Escritura consecutiva en ráfaga a la SD
+  			res_A = f_write(&fil_A, &audio_buffer_SAI1A[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenA);
+  			res_B = f_write(&fil_B, &audio_buffer_SAI1B[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenB);
+  			res_C = f_write(&fil_C, &audio_buffer_SAI2A[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenC);
+  			res_D = f_write(&fil_D, &audio_buffer_SAI2B[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenD);
 
-			ndtr = __HAL_DMA_GET_COUNTER(&hdma_sai1_a);
-			datos_nuevos_post = (BUFFER_SIZE / 2) - ndtr; //Determina la cantidad de muestras procesadas por el DMA despues de enviar a SD
+  			if (res_A != FR_OK || res_B != FR_OK || res_C != FR_OK || res_D != FR_OK ||
+  				bytesWrittenA == 0 || bytesWrittenB == 0 || bytesWrittenC == 0 || bytesWrittenD == 0) {
+  				Error_Handler();
+  			}
 
-			IS_BUFFER_HALF_FULL = NO;
+  			// 3. Bajamos ambas banderas
+  			IS_BUFFER_FULL_SAI1 = NO;
+  			IS_BUFFER_FULL_SAI2 = NO;
+  		}
 
+  		// --- CONTROL DE BOTÓN (CIERRE SEGURO) ---
+  		if (button_pressed) {
+  			f_close(&fil_A);
+  			f_close(&fil_B);
+  			f_close(&fil_C);
+  			f_close(&fil_D);
+  			f_mount(NULL, "", 0);
 
-		}
-
-		if(IS_BUFFER_FULL == YES ) {
-
-			for (uint32_t i = BUFFER_SIZE / 2; i < (BUFFER_SIZE); i++) {
-							audio_buffer_A[i] &= 0xFFFFFF00;
-				            audio_buffer_B[i] &= 0xFFFFFF00;
-						}
-
-			//Volcamos la segunda mitad de los Mics 1 y 2
-			        res_A = f_write(&fil_A, &audio_buffer_A[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenA);
-
-			        //Volcamos la segunda mitad de los Mics 3 y 4
-			        res_B = f_write(&fil_B, &audio_buffer_B[BUFFER_SIZE / 2], (BUFFER_SIZE / 2) * sizeof(uint32_t), &bytesWrittenB);
-
-			if (res_A != FR_OK || res_B != FR_OK || bytesWrittenA == 0 || bytesWrittenB == 0) {
-
-			}
-
-			IS_BUFFER_FULL = NO;
-		}
-
-		if (boton_parar_presionado) {
-			// Cerramos de forma segura y ordenada ambas estructuras de archivo en la SD
-			        f_close(&fil_A);
-			        f_close(&fil_B);
-			        f_mount(NULL, "", 0);
-
-			        // Detenemos los dos flujos DMA independientes para que el hardware deje de transmitir
-			        HAL_SAI_DMAStop(&hsai_BlockA1);
-			        HAL_SAI_DMAStop(&hsai_BlockB1);
-			        break; // Salimos del bucle infinito
-		    }
-  }
-
+  			HAL_SAI_DMAStop(&hsai_BlockA1);
+  			HAL_SAI_DMAStop(&hsai_BlockB1);
+  			HAL_SAI_DMAStop(&hsai_BlockA2);
+  			HAL_SAI_DMAStop(&hsai_BlockB2);
+  			break;
+  		}
+    }
   /* USER CODE END 3 */
 }
 
@@ -323,7 +366,8 @@ void PeriphCommonClock_Config(void)
 
   /** Initializes the peripherals clock
   */
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SAI1;
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SAI1|RCC_PERIPHCLK_SAI2A
+                              |RCC_PERIPHCLK_SAI2B;
   PeriphClkInitStruct.PLL3.PLL3M = 5;
   PeriphClkInitStruct.PLL3.PLL3N = 40;
   PeriphClkInitStruct.PLL3.PLL3P = 5;
@@ -333,6 +377,8 @@ void PeriphCommonClock_Config(void)
   PeriphClkInitStruct.PLL3.PLL3VCOSEL = RCC_PLL3VCOWIDE;
   PeriphClkInitStruct.PLL3.PLL3FRACN = 0;
   PeriphClkInitStruct.Sai1ClockSelection = RCC_SAI1CLKSOURCE_PLL3;
+  PeriphClkInitStruct.Sai2BClockSelection = RCC_SAI2BCLKSOURCE_PLL3;
+  PeriphClkInitStruct.Sai2AClockSelection = RCC_SAI2ACLKSOURCE_PLL3;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -365,7 +411,7 @@ static void MX_SAI1_Init(void)
   hsai_BlockA1.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
   hsai_BlockA1.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
   hsai_BlockA1.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_8K;
-  hsai_BlockA1.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
+  hsai_BlockA1.Init.SynchroExt = SAI_SYNCEXT_OUTBLOCKA_ENABLE;
   hsai_BlockA1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockA1.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockA1.Init.PdmInit.Activation = DISABLE;
@@ -393,7 +439,7 @@ static void MX_SAI1_Init(void)
   hsai_BlockB1.Init.Synchro = SAI_SYNCHRONOUS;
   hsai_BlockB1.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
   hsai_BlockB1.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
-  hsai_BlockB1.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
+  hsai_BlockB1.Init.SynchroExt = SAI_SYNCEXT_OUTBLOCKA_ENABLE;
   hsai_BlockB1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockB1.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockB1.Init.TriState = SAI_OUTPUT_NOTRELEASED;
@@ -416,6 +462,83 @@ static void MX_SAI1_Init(void)
   /* USER CODE BEGIN SAI1_Init 2 */
 
   /* USER CODE END SAI1_Init 2 */
+
+}
+
+/**
+  * @brief SAI2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SAI2_Init(void)
+{
+
+  /* USER CODE BEGIN SAI2_Init 0 */
+
+  /* USER CODE END SAI2_Init 0 */
+
+  /* USER CODE BEGIN SAI2_Init 1 */
+
+  /* USER CODE END SAI2_Init 1 */
+  hsai_BlockA2.Instance = SAI2_Block_A;
+  hsai_BlockA2.Init.Protocol = SAI_FREE_PROTOCOL;
+  hsai_BlockA2.Init.AudioMode = SAI_MODESLAVE_RX;
+  hsai_BlockA2.Init.DataSize = SAI_DATASIZE_32;
+  hsai_BlockA2.Init.FirstBit = SAI_FIRSTBIT_MSB;
+  hsai_BlockA2.Init.ClockStrobing = SAI_CLOCKSTROBING_RISINGEDGE;
+  hsai_BlockA2.Init.Synchro = SAI_SYNCHRONOUS_EXT_SAI1;
+  hsai_BlockA2.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
+  hsai_BlockA2.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
+  hsai_BlockA2.Init.MonoStereoMode = SAI_STEREOMODE;
+  hsai_BlockA2.Init.CompandingMode = SAI_NOCOMPANDING;
+  hsai_BlockA2.Init.TriState = SAI_OUTPUT_NOTRELEASED;
+  hsai_BlockA2.Init.PdmInit.Activation = DISABLE;
+  hsai_BlockA2.Init.PdmInit.MicPairsNbr = 0;
+  hsai_BlockA2.Init.PdmInit.ClockEnable = SAI_PDM_CLOCK1_ENABLE;
+  hsai_BlockA2.FrameInit.FrameLength = 64;
+  hsai_BlockA2.FrameInit.ActiveFrameLength = 32;
+  hsai_BlockA2.FrameInit.FSDefinition = SAI_FS_STARTFRAME;
+  hsai_BlockA2.FrameInit.FSPolarity = SAI_FS_ACTIVE_LOW;
+  hsai_BlockA2.FrameInit.FSOffset = SAI_FS_BEFOREFIRSTBIT;
+  hsai_BlockA2.SlotInit.FirstBitOffset = 0;
+  hsai_BlockA2.SlotInit.SlotSize = SAI_SLOTSIZE_DATASIZE;
+  hsai_BlockA2.SlotInit.SlotNumber = 2;
+  hsai_BlockA2.SlotInit.SlotActive = 0x00000003;
+  if (HAL_SAI_Init(&hsai_BlockA2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  hsai_BlockB2.Instance = SAI2_Block_B;
+  hsai_BlockB2.Init.Protocol = SAI_FREE_PROTOCOL;
+  hsai_BlockB2.Init.AudioMode = SAI_MODESLAVE_RX;
+  hsai_BlockB2.Init.DataSize = SAI_DATASIZE_32;
+  hsai_BlockB2.Init.FirstBit = SAI_FIRSTBIT_MSB;
+  hsai_BlockB2.Init.ClockStrobing = SAI_CLOCKSTROBING_RISINGEDGE;
+  hsai_BlockB2.Init.Synchro = SAI_SYNCHRONOUS;
+  hsai_BlockB2.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
+  hsai_BlockB2.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
+  hsai_BlockB2.Init.MonoStereoMode = SAI_STEREOMODE;
+  hsai_BlockB2.Init.CompandingMode = SAI_NOCOMPANDING;
+  hsai_BlockB2.Init.TriState = SAI_OUTPUT_NOTRELEASED;
+  hsai_BlockB2.Init.PdmInit.Activation = DISABLE;
+  hsai_BlockB2.Init.PdmInit.MicPairsNbr = 0;
+  hsai_BlockB2.Init.PdmInit.ClockEnable = SAI_PDM_CLOCK1_ENABLE;
+  hsai_BlockB2.FrameInit.FrameLength = 64;
+  hsai_BlockB2.FrameInit.ActiveFrameLength = 32;
+  hsai_BlockB2.FrameInit.FSDefinition = SAI_FS_STARTFRAME;
+  hsai_BlockB2.FrameInit.FSPolarity = SAI_FS_ACTIVE_LOW;
+  hsai_BlockB2.FrameInit.FSOffset = SAI_FS_BEFOREFIRSTBIT;
+  hsai_BlockB2.SlotInit.FirstBitOffset = 0;
+  hsai_BlockB2.SlotInit.SlotSize = SAI_SLOTSIZE_DATASIZE;
+  hsai_BlockB2.SlotInit.SlotNumber = 2;
+  hsai_BlockB2.SlotInit.SlotActive = 0x00000003;
+  if (HAL_SAI_Init(&hsai_BlockB2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SAI2_Init 2 */
+
+  /* USER CODE END SAI2_Init 2 */
 
 }
 
@@ -443,7 +566,9 @@ static void MX_SDMMC1_SD_Init(void)
   /* USER CODE BEGIN SDMMC1_Init 2 */
     hsd1.Init.BusWide = SDMMC_BUS_WIDE_1B;
     // 2. Inicializamos la tarjeta de forma segura en 1-Bit
-        if (HAL_SD_Init(&hsd1) != HAL_OK)
+
+    estado_inicializacion = HAL_SD_Init(&hsd1);
+        if ( estado_inicializacion != HAL_OK)
         {
             Error_Handler();
         }
@@ -470,11 +595,17 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
   /* DMA1_Stream1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+  /* DMA1_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
+  /* DMA1_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
 
 }
 
@@ -494,6 +625,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin : B1_Pin */
@@ -518,18 +650,28 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai_BlockA1) {
-    if (hsai_BlockA1->Instance == SAI1_Block_A) {
-    	IS_BUFFER_HALF_FULL = YES;
+
+/* ----- SAI1 and SAI2 IRQ Section  -----*/
+
+void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
+    if (hsai->Instance == SAI1_Block_A) {
+    	IS_BUFFER_HALF_FULL_SAI1 = YES;
     }
+    if (hsai->Instance == SAI2_Block_A) {
+		IS_BUFFER_HALF_FULL_SAI2 = YES;
+    }
+}
+void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai) {
+    if (hsai->Instance == SAI1_Block_A) {
+    	IS_BUFFER_FULL_SAI1 = YES;
+    }
+    if (hsai->Instance == SAI2_Block_A) {
+		IS_BUFFER_FULL_SAI2 = YES;
+	}
 }
 
-// El DMA llenó la segunda mitad del arreglo (índices 2048 a 4095)
-void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai_BlockA1) {
-    if (hsai_BlockA1->Instance == SAI1_Block_A) {
-    	IS_BUFFER_FULL = YES;
-    }
-}
+
+/* ----- Interface IRQ Section  -----*/
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -538,7 +680,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     {
         // 2. Aquí pones tu lógica
         // Por ejemplo: cambiar una bandera para detener la grabación
-        boton_parar_presionado = 1;
+    	button_pressed = YES;
     }
 }
 /* USER CODE END 4 */
