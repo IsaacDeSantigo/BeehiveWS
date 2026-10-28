@@ -70,6 +70,12 @@ void Error_Handler(void);
 #define PH1_MCU_GPIO_Port GPIOH
 #define SD_DETECT_Pin GPIO_PIN_0
 #define SD_DETECT_GPIO_Port GPIOC
+#define LD_RED_Pin GPIO_PIN_13
+#define LD_RED_GPIO_Port GPIOB
+#define LD_YELLOW_Pin GPIO_PIN_15
+#define LD_YELLOW_GPIO_Port GPIOB
+#define LD_GREEN_Pin GPIO_PIN_6
+#define LD_GREEN_GPIO_Port GPIOC
 
 /* USER CODE BEGIN Private defines */
 

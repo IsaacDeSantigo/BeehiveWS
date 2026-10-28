@@ -123,8 +123,20 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
   } >FLASH
 
+
+  
+  
   /* used by the startup to initialize data */
   _sidata = LOADADDR(.data);
+  
+  /* Sección exclusiva para el Mega Ring Buffer en AXI SRAM */
+  .axi_ring_buffer (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.axi_ring_buffer)
+    *(.axi_ring_buffer*)
+    . = ALIGN(32);
+  } >RAM
 
   /* Initialized data sections goes into RAM, load LMA copy after code */
   .data :
@@ -165,7 +177,10 @@ SECTIONS
     *(.ram_cd*)
     . = ALIGN(4);
   } >RAM_CD
-  /* -------------------------------------- */
+  
+  
+
+/* -------------------------------------- */
 
 
   /* User_heap_stack section, used to check that there is enough RAM left */
@@ -188,4 +203,13 @@ SECTIONS
   }
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
+  
+  /* Sección especial en el bus AHB para los buffers de audio */
+  .audio_buffers (NOLOAD) :
+  {
+    . = ALIGN(4);
+    *(.audio_buffers)
+    *(.audio_buffers*)
+    . = ALIGN(4);
+  } >RAM_CD
 }

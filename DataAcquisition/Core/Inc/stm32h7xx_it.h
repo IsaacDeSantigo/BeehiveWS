@@ -61,8 +61,10 @@ void DMA1_Stream2_IRQHandler(void);
 void DMA1_Stream3_IRQHandler(void);
 void EXTI15_10_IRQHandler(void);
 void SDMMC1_IRQHandler(void);
+void FPU_IRQHandler(void);
 void SAI1_IRQHandler(void);
 void SAI2_IRQHandler(void);
+void MDMA_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */

@@ -51,10 +51,20 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+extern volatile uint8_t  mdma_node_counter;
+extern volatile uint8_t  sd_write_ready_flag;
+extern volatile uint32_t sd_buffer_to_write;
+
+extern uint32_t audio_global_buffer_ping[];
+extern uint32_t audio_global_buffer_pong[];
 
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+extern MDMA_HandleTypeDef hmdma_mdma_channel0_dma1_stream0_tc_0;
+extern MDMA_HandleTypeDef hmdma_mdma_channel1_dma1_stream1_tc_0;
+extern MDMA_HandleTypeDef hmdma_mdma_channel2_dma1_stream2_tc_0;
+extern MDMA_HandleTypeDef hmdma_mdma_channel3_dma1_stream3_tc_0;
 extern DMA_HandleTypeDef hdma_sai1_a;
 extern DMA_HandleTypeDef hdma_sai1_b;
 extern DMA_HandleTypeDef hdma_sai2_a;
@@ -214,7 +224,7 @@ void DMA1_Stream0_IRQHandler(void)
   /* USER CODE BEGIN DMA1_Stream0_IRQn 0 */
 
   /* USER CODE END DMA1_Stream0_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_sai1_b);
+  HAL_DMA_IRQHandler(&hdma_sai1_a);
   /* USER CODE BEGIN DMA1_Stream0_IRQn 1 */
 
   /* USER CODE END DMA1_Stream0_IRQn 1 */
@@ -228,7 +238,7 @@ void DMA1_Stream1_IRQHandler(void)
   /* USER CODE BEGIN DMA1_Stream1_IRQn 0 */
 
   /* USER CODE END DMA1_Stream1_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_sai1_a);
+  HAL_DMA_IRQHandler(&hdma_sai1_b);
   /* USER CODE BEGIN DMA1_Stream1_IRQn 1 */
 
   /* USER CODE END DMA1_Stream1_IRQn 1 */
@@ -291,6 +301,19 @@ void SDMMC1_IRQHandler(void)
 }
 
 /**
+  * @brief This function handles FPU global interrupt.
+  */
+void FPU_IRQHandler(void)
+{
+  /* USER CODE BEGIN FPU_IRQn 0 */
+
+  /* USER CODE END FPU_IRQn 0 */
+  /* USER CODE BEGIN FPU_IRQn 1 */
+
+  /* USER CODE END FPU_IRQn 1 */
+}
+
+/**
   * @brief This function handles SAI1 global interrupt.
   */
 void SAI1_IRQHandler(void)
@@ -318,6 +341,61 @@ void SAI2_IRQHandler(void)
   /* USER CODE BEGIN SAI2_IRQn 1 */
 
   /* USER CODE END SAI2_IRQn 1 */
+}
+
+/**
+  * @brief This function handles MDMA global interrupt.
+  */
+void MDMA_IRQHandler(void)
+{
+  /* USER CODE BEGIN MDMA_IRQn 0 */
+
+  /* 1. Obtenemos acceso directo al silicio del Canal Maestro (0) */
+  MDMA_Channel_TypeDef* ch0_regs = hmdma_mdma_channel0_dma1_stream0_tc_0.Instance;
+
+  /* 2. Capturamos la interrupción de Transferencia Completa ANTES que la HAL */
+  if ((ch0_regs->CISR & MDMA_CISR_BTIF ) != 0)
+  {
+      /* CRÍTICO: Bajar la bandera inmediatamente. Esto vuelve "ciega" a la HAL */
+      ch0_regs->CIFCR = MDMA_CIFCR_CBTIF;
+
+      /* Ejecutamos nuestra lógica de Macro Ping-Pong */
+      mdma_node_counter++;
+
+      if (mdma_node_counter == 4)
+      {
+          /* ¡Ping Global de 256 KB listo! */
+          sd_buffer_to_write = (uint32_t)audio_global_buffer_ping;
+          sd_write_ready_flag = 1;
+      }
+      else if (mdma_node_counter == 8)
+      {
+          /* ¡Pong Global de 256 KB listo! */
+          sd_buffer_to_write = (uint32_t)audio_global_buffer_pong;
+          sd_write_ready_flag = 1;
+
+          /* Reiniciar ciclo */
+          mdma_node_counter = 0;
+      }
+  }
+
+  /* 3. Capturamos errores de bus AXI para evitar cuelgues silenciosos */
+  if ((ch0_regs->CISR & MDMA_CISR_TEIF) != 0)
+  {
+      /* Bajamos la bandera de error */
+      ch0_regs->CIFCR = MDMA_CIFCR_CTEIF;
+
+      /* Aquí puedes agregar un breakpoint o un flag de error para depuración */
+  }
+
+  /* USER CODE END MDMA_IRQn 0 */
+  HAL_MDMA_IRQHandler(&hmdma_mdma_channel0_dma1_stream0_tc_0);
+  HAL_MDMA_IRQHandler(&hmdma_mdma_channel1_dma1_stream1_tc_0);
+  HAL_MDMA_IRQHandler(&hmdma_mdma_channel2_dma1_stream2_tc_0);
+  HAL_MDMA_IRQHandler(&hmdma_mdma_channel3_dma1_stream3_tc_0);
+  /* USER CODE BEGIN MDMA_IRQn 1 */
+
+  /* USER CODE END MDMA_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */
